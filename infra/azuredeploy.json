@@ -1,0 +1,287 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "description": "Equivalent ARM template for main.bicep: VNet + subnet, NSG (RDP restricted to an admin range), one Windows Server VM with a system-assigned managed identity, and a diagnostics Storage Account. Author: Zohaib Yousaf, IT Manager."
+  },
+  "outputs": {
+    "storageAccountName": {
+      "type": "string",
+      "value": "[variables('storageAccountName')]"
+    },
+    "vmManagedIdentityPrincipalId": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.Compute/virtualMachines', variables('vmName')), '2024-03-01', 'Full').identity.principalId]"
+    },
+    "vmName": {
+      "type": "string",
+      "value": "[variables('vmName')]"
+    },
+    "vmPrivateIpAddress": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.Network/networkInterfaces', variables('nicName'))).ipConfigurations[0].properties.privateIPAddress]"
+    },
+    "vnetName": {
+      "type": "string",
+      "value": "[variables('vnetName')]"
+    }
+  },
+  "parameters": {
+    "adminPassword": {
+      "metadata": {
+        "description": "Local administrator password. Pass from Key Vault or a prompt, never commit it to source control."
+      },
+      "type": "securestring"
+    },
+    "adminSourceAddressPrefix": {
+      "metadata": {
+        "description": "Public IP or CIDR range allowed to reach the VM by RDP (3389). Never leave open to the internet in production."
+      },
+      "type": "string"
+    },
+    "adminUsername": {
+      "metadata": {
+        "description": "Local administrator user name for the virtual machine."
+      },
+      "type": "string"
+    },
+    "environment": {
+      "allowedValues": [
+        "prod",
+        "test",
+        "dev"
+      ],
+      "defaultValue": "prod",
+      "metadata": {
+        "description": "Short environment name used in resource names."
+      },
+      "type": "string"
+    },
+    "location": {
+      "defaultValue": "[resourceGroup().location]",
+      "metadata": {
+        "description": "Azure region for all resources."
+      },
+      "type": "string"
+    },
+    "namePrefix": {
+      "defaultValue": "ops",
+      "maxLength": 10,
+      "metadata": {
+        "description": "Prefix used for resource names."
+      },
+      "minLength": 2,
+      "type": "string"
+    },
+    "tags": {
+      "defaultValue": {
+        "CostCenter": "IT",
+        "Environment": "prod",
+        "ManagedBy": "ARM",
+        "Owner": "IT Operations"
+      },
+      "metadata": {
+        "description": "Tags applied to every resource."
+      },
+      "type": "object"
+    },
+    "vmSize": {
+      "defaultValue": "Standard_B2ms",
+      "metadata": {
+        "description": "Size of the virtual machine."
+      },
+      "type": "string"
+    },
+    "vnetAddressPrefix": {
+      "defaultValue": "10.20.0.0/16",
+      "metadata": {
+        "description": "Address space for the virtual network."
+      },
+      "type": "string"
+    },
+    "workloadSubnetPrefix": {
+      "defaultValue": "10.20.1.0/24",
+      "metadata": {
+        "description": "Address range for the workload subnet."
+      },
+      "type": "string"
+    }
+  },
+  "resources": [
+    {
+      "apiVersion": "2023-11-01",
+      "location": "[parameters('location')]",
+      "name": "[variables('nsgName')]",
+      "properties": {
+        "securityRules": [
+          {
+            "name": "Allow-RDP-From-Admin-Range",
+            "properties": {
+              "access": "Allow",
+              "description": "Allow RDP only from the admin/VPN address range.",
+              "destinationAddressPrefix": "*",
+              "destinationPortRange": "3389",
+              "direction": "Inbound",
+              "priority": 100,
+              "protocol": "Tcp",
+              "sourceAddressPrefix": "[parameters('adminSourceAddressPrefix')]",
+              "sourcePortRange": "*"
+            }
+          },
+          {
+            "name": "Deny-All-Other-Inbound",
+            "properties": {
+              "access": "Deny",
+              "description": "Explicit deny for all other inbound traffic.",
+              "destinationAddressPrefix": "*",
+              "destinationPortRange": "*",
+              "direction": "Inbound",
+              "priority": 4096,
+              "protocol": "*",
+              "sourceAddressPrefix": "*",
+              "sourcePortRange": "*"
+            }
+          }
+        ]
+      },
+      "tags": "[parameters('tags')]",
+      "type": "Microsoft.Network/networkSecurityGroups"
+    },
+    {
+      "apiVersion": "2023-11-01",
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/networkSecurityGroups', variables('nsgName'))]"
+      ],
+      "location": "[parameters('location')]",
+      "name": "[variables('vnetName')]",
+      "properties": {
+        "addressSpace": {
+          "addressPrefixes": [
+            "[parameters('vnetAddressPrefix')]"
+          ]
+        },
+        "subnets": [
+          {
+            "name": "[variables('subnetName')]",
+            "properties": {
+              "addressPrefix": "[parameters('workloadSubnetPrefix')]",
+              "networkSecurityGroup": {
+                "id": "[resourceId('Microsoft.Network/networkSecurityGroups', variables('nsgName'))]"
+              }
+            }
+          }
+        ]
+      },
+      "tags": "[parameters('tags')]",
+      "type": "Microsoft.Network/virtualNetworks"
+    },
+    {
+      "apiVersion": "2023-05-01",
+      "kind": "StorageV2",
+      "location": "[parameters('location')]",
+      "name": "[variables('storageAccountName')]",
+      "properties": {
+        "allowBlobPublicAccess": false,
+        "minimumTlsVersion": "TLS1_2",
+        "networkAcls": {
+          "bypass": "AzureServices",
+          "defaultAction": "Allow"
+        },
+        "supportsHttpsTrafficOnly": true
+      },
+      "sku": {
+        "name": "Standard_LRS"
+      },
+      "tags": "[parameters('tags')]",
+      "type": "Microsoft.Storage/storageAccounts"
+    },
+    {
+      "apiVersion": "2023-11-01",
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/virtualNetworks', variables('vnetName'))]"
+      ],
+      "location": "[parameters('location')]",
+      "name": "[variables('nicName')]",
+      "properties": {
+        "ipConfigurations": [
+          {
+            "name": "ipconfig1",
+            "properties": {
+              "privateIPAllocationMethod": "Dynamic",
+              "subnet": {
+                "id": "[resourceId('Microsoft.Network/virtualNetworks/subnets', variables('vnetName'), variables('subnetName'))]"
+              }
+            }
+          }
+        ]
+      },
+      "tags": "[parameters('tags')]",
+      "type": "Microsoft.Network/networkInterfaces"
+    },
+    {
+      "apiVersion": "2024-03-01",
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/networkInterfaces', variables('nicName'))]",
+        "[resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName'))]"
+      ],
+      "identity": {
+        "type": "SystemAssigned"
+      },
+      "location": "[parameters('location')]",
+      "name": "[variables('vmName')]",
+      "properties": {
+        "diagnosticsProfile": {
+          "bootDiagnostics": {
+            "enabled": true,
+            "storageUri": "[reference(resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName'))).primaryEndpoints.blob]"
+          }
+        },
+        "hardwareProfile": {
+          "vmSize": "[parameters('vmSize')]"
+        },
+        "networkProfile": {
+          "networkInterfaces": [
+            {
+              "id": "[resourceId('Microsoft.Network/networkInterfaces', variables('nicName'))]"
+            }
+          ]
+        },
+        "osProfile": {
+          "adminPassword": "[parameters('adminPassword')]",
+          "adminUsername": "[parameters('adminUsername')]",
+          "computerName": "[variables('vmName')]",
+          "windowsConfiguration": {
+            "enableAutomaticUpdates": true,
+            "provisionVMAgent": true
+          }
+        },
+        "storageProfile": {
+          "imageReference": {
+            "offer": "WindowsServer",
+            "publisher": "MicrosoftWindowsServer",
+            "sku": "2022-datacenter-azure-edition",
+            "version": "latest"
+          },
+          "osDisk": {
+            "caching": "ReadWrite",
+            "createOption": "FromImage",
+            "managedDisk": {
+              "storageAccountType": "Premium_LRS"
+            },
+            "name": "[concat(variables('vmName'), '-osdisk')]"
+          }
+        }
+      },
+      "tags": "[parameters('tags')]",
+      "type": "Microsoft.Compute/virtualMachines"
+    }
+  ],
+  "variables": {
+    "nicName": "[concat(variables('vmName'), '-nic')]",
+    "nsgName": "[concat(parameters('namePrefix'), '-', parameters('environment'), '-nsg')]",
+    "storageAccountName": "[toLower(concat(parameters('namePrefix'), parameters('environment'), 'diag', uniqueString(resourceGroup().id)))]",
+    "subnetName": "workload",
+    "vmName": "[concat(parameters('namePrefix'), '-', parameters('environment'), '-vm01')]",
+    "vnetName": "[concat(parameters('namePrefix'), '-', parameters('environment'), '-vnet')]"
+  }
+}

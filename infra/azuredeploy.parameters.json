@@ -1,0 +1,32 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "adminPassword": {
+      "value": "REPLACE-ME-pass-this-from-Key-Vault-or-a-prompt"
+    },
+    "adminSourceAddressPrefix": {
+      "value": "203.0.113.10/32"
+    },
+    "adminUsername": {
+      "value": "azureadmin"
+    },
+    "environment": {
+      "value": "test"
+    },
+    "location": {
+      "value": "westeurope"
+    },
+    "namePrefix": {
+      "value": "ops"
+    },
+    "tags": {
+      "value": {
+        "CostCenter": "IT",
+        "Environment": "test",
+        "ManagedBy": "Bicep",
+        "Owner": "IT Operations"
+      }
+    }
+  }
+}
